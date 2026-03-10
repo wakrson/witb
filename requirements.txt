@@ -1,0 +1,5 @@
+faiss-gpu-cu12
+sentence_transformers
+transformers>=4.51.0
+sentence-transformers>=2.7.0
+vllm>=0.8.5

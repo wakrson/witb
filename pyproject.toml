@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "witb"
+description = "U-Net segmentation utilities"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Mark Robinson", email = "wakrson@gmail.com" }]
+license = "MIT"  # SPDX expression
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+dynamic = ["version"]  # setuptools-scm will provide version from git tags
+
+[project.urls]
+Homepage = "https://github.com/your-user-or-org/witb"
+Repository = "https://github.com/your-user-or-org/witb"
+Issues = "https://github.com/your-user-or-org/witb/issues"
+
+[project.scripts]
+train = "witb.train:main"
+
+# Keep only the 'witb' package; avoid accidentally packaging 'runs', 'cityscapes', etc.
+[tool.setuptools.packages.find]
+include = ["witb*"]
+exclude = ["runs*", "cityscapes*", "data*", "notebooks*", "scripts*"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+fallback_version = "0.0.0"
