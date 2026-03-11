@@ -19,7 +19,14 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
 ]
-dependencies = []
+
+dependencies = [
+    "faiss-gpu-cu12",
+    "sentence_transformers",
+    "transformers>=4.51.0",
+    "sentence-transformers>=2.7.0",
+    "vllm>=0.8.5",
+]
 dynamic = ["version"]  # setuptools-scm will provide version from git tags
 
 [project.urls]
