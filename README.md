@@ -2,7 +2,10 @@
 
 Prerequisites
 ```bash
-sudo apt update && apt install -y python-3.12 python3.12-venv
+sudo apt-get update
+sudo apt-get install -y g++ gcc build-essential
+
+sudo apt update && sudo apt install -y python-3.12 python3.12-venv
 ```
 Setup
 ```bash
