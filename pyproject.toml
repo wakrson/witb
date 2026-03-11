@@ -26,6 +26,8 @@ dependencies = [
     "transformers>=4.51.0",
     "sentence-transformers>=2.7.0",
     "vllm>=0.8.5",
+    "accelerate",
+    "flash-attn"
 ]
 dynamic = ["version"]  # setuptools-scm will provide version from git tags
 

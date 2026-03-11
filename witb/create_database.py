@@ -23,6 +23,7 @@ def main() -> None:
         "Qwen/Qwen3-Embedding-8B",
         model_kwargs={"attn_implementation": "flash_attention_2", "device_map": "auto"},
         tokenizer_kwargs={"padding_side": "left"},
+        
     )
 
     # 1. Initialize Model and Paths
@@ -40,13 +41,13 @@ def main() -> None:
         print("Encoding verses...")
         for row in tqdm.tqdm(reader):
             text = row["text"]
-            # Create metadata reference
-            ref = f"{row['book']} {row['chapter']}:{row['verse']}"
             
             # Generate embedding
             embedding = model.encode(text)
-            
             embeddings.append(embedding)
+            # Create metadata reference
+            ref = f"{row['book']} {row['chapter']}:{row['verse']}"
+
             metadata.append({"ref": ref, "text": text})
 
     # 3. Build the FAISS Index
