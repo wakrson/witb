@@ -5,14 +5,39 @@ import faiss
 import numpy as np
 from flask import Flask, jsonify, request
 
+model = SentenceTransformer(
+    "Qwen/Qwen3-Embedding-4B",
+    model_kwargs={"attn_implementation": "eager", "device_map": "auto"},
+    tokenizer_kwargs={"padding_side": "left"}, 
+)
+
+index = None
+
 app = Flask(__name__)
 
 @app.route("/search", methods=["POST"])
 def search():
     body = request.get_json(force=True)
     query = body.get("query", "").strip()
-    print(query)
-    return query
+    top_k = int(body.get("top_k", 5))
+
+    if not query:
+        return jsonify({"error": "query is required"})
+
+    embedding = model.encode(text, convert_to_numpy=True).astype("float32").reshape(1, -1)
+    distances, indices = index.search(embedding, top_k)
+    
+    results = []
+
+    for rank, i in enumerate(indices[0]):
+        result = {
+            "ref": metadata[i]["ref"],
+            "text": metadata[i]["text"]
+            "score": float(distances[0][rank])
+        }
+        results.append(result)
+
+    return jsonify({"query": query, "results": results})
 
 @app.route("/health", methods=["GET"])
 def health():

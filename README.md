@@ -25,3 +25,8 @@ python -m witb.parse --data=/path/to/bible.pdf
 ```bash
 python -m witb.create_database --input=/path/to/verses.csv --output=/path/to/index --window=1
 ```
+
+**Start server**
+```bash
+python -m witb.server
+```
