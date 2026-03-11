@@ -23,9 +23,14 @@ def main() -> None:
     # We recommend enabling flash_attention_2 for better acceleration and memory saving,
     # together with setting `padding_side` to "left":
     model = SentenceTransformer(
-        "Qwen/Qwen3-Embedding-4B",
-        model_kwargs={"attn_implementation": "eager", "device_map": "auto"},
-        tokenizer_kwargs={"padding_side": "left"}, 
+        model_name,
+        device="cuda",
+        model_kwargs={
+            "attn_implementation": "eager",
+            "device_map": None,
+            #"dtype": torch.float16,
+        },
+        tokenizer_kwargs={"padding_side": "left"},
     )
 
     # Containers for data
