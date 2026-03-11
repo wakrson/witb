@@ -1,5 +1,6 @@
 *.venv
 *.egg-info
 *.ctl
+*.index
 data/
-witb/__pycache__
+witb/__pycache__data/bible.index
