@@ -3,5 +3,5 @@
 *.ctl
 *.index
 data/
-witb/__pycache__
+backend/__pycache__
 data/bible.index

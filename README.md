@@ -18,20 +18,20 @@ pip install flash-attn --no-build-isolation
 
 **Parse Bible PDF**
 ```bash
-python -m witb.parse --data=/path/to/bible.pdf
+python -m backend.parse --data=/path/to/bible.pdf
 ```
 
 **Build FAISS index**
 ```bash
-python -m witb.create_database --input=/path/to/verses.csv --output=/path/to/index --window=1
+python -m backend.create_database --input=/path/to/verses.csv --output=/path/to/index --window=1
 ```
 
 **Startup server**
 ```bash
-gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 witb.server:app
+gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 backend.server:app
 ```
 
 **Start server**
 ```bash
-python -m witb.server
+python -m backend.server
 ```
