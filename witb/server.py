@@ -23,7 +23,7 @@ def load(model_name: str, index_path: str, metadata_path: str):
         model_kwargs={
             "attn_implementation": "eager",
             "device_map": None,
-            #"dtype": torch.float16,
+            "dtype": torch.float16,
         },
         tokenizer_kwargs={"padding_side": "left"},
     )
@@ -57,7 +57,6 @@ def search():
             "score": float(distances[0][rank]),
         }
         for rank, i in enumerate(indices[0])
-        #if i < len(metadata)
     ]
 
     return jsonify({"query": query, "results": results})
@@ -67,15 +66,8 @@ def search():
 def health():
     return jsonify({"status": "ok"})
 
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="Qwen/Qwen3-Embedding-4B")
-    parser.add_argument("--index", default="/home/wakrson/witb/data/bible.index")
-    parser.add_argument("--metadata", default="/home/wakrson/witb/data/bible.json")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=5000)
-    args = parser.parse_args()
-
-    load(args.model, args.index, args.metadata)
-    app.run(host=args.host, port=args.port, debug=True, use_reloader=False)
+load(
+    "Qwen/Qwen3-Embedding-4B",
+    "/home/wakrson/witb/data/bible.index",
+    "/home/wakrson/witb/data/bible.json",
+)

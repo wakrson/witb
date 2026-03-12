@@ -26,6 +26,11 @@ python -m witb.parse --data=/path/to/bible.pdf
 python -m witb.create_database --input=/path/to/verses.csv --output=/path/to/index --window=1
 ```
 
+**Startup server**
+```bash
+gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 witb.server:app
+```
+
 **Start server**
 ```bash
 python -m witb.server
