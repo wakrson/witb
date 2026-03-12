@@ -35,3 +35,10 @@ gunicorn --workers 1 --threads 4 --bind 0.0.0.0:5000 backend.server:app
 ```bash
 python -m backend.server
 ```
+
+## Development
+**Frontend**
+```bash
+cd frontend
+npm run dev
+```
