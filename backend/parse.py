@@ -71,6 +71,9 @@ SIZE_PAGE_HEADER = 10.5      # running headers & page numbers are ~10.0
 SIZE_BODY_TEXT = 11.0         # body text and chapter markers are ~11.8
 SIZE_DROP_CAP = 20.0          # decorative drop caps are ~34
 
+# Single letters that are standalone words, not drop-cap prefixes
+STANDALONE_LETTERS = {"I", "A", "O"}
+
 
 # --- Data structures --------------------------------------------------------
 
@@ -98,7 +101,7 @@ def detect_layout(pdf):
 
 # --- Word classification ----------------------------------------------------
 
-def classify_word(w, layout, expected_chapter):
+def classify_word(w, layout, expected_chapter, current_book=None):
     text = w["text"]
     y = w["top"]
     size = round(w["bottom"] - w["top"], 1)
@@ -108,7 +111,10 @@ def classify_word(w, layout, expected_chapter):
         if size < SIZE_PAGE_HEADER:
             return ("SKIP", text)
 
-    if size < SIZE_SECTION_HEADER and text.isupper() and len(text) >= 2:
+    # Section headers: small uppercase text, but detect "PSALM" headers specially
+    if size <= SIZE_SECTION_HEADER and text.isupper() and len(text) >= 2:
+        if text == "PSALM" and current_book == "Psalms":
+            return ("PSALM_HEADER", text)
         return ("SKIP", text)
 
     # 2. Drop caps
@@ -119,11 +125,20 @@ def classify_word(w, layout, expected_chapter):
     if size < SIZE_SUPERSCRIPT and re.match(r"^\d{1,3}$", text):
         return ("VERSE", text)
 
-    # 4. Chapter markers
-    if (size >= SIZE_BODY_TEXT 
-            and re.match(r"^\d{1,3}$", text) 
+    # 4. Chapter markers — require position near a column's left edge
+    if (size >= SIZE_BODY_TEXT
+            and re.match(r"^\d{1,3}$", text)
             and int(text) == expected_chapter):
-        return ("CHAPTER", text)
+        max_chapters = BOOK_CHAPTERS.get(current_book, 999)
+        if int(text) <= max_chapters:
+            x = w["x0"]
+            mid = layout["col_midpoint"]
+            left_col_start = 70
+            right_col_start = mid + 20
+            near_col_start = (x < left_col_start + 50 or
+                              abs(x - right_col_start) < 50)
+            if near_col_start:
+                return ("CHAPTER", text)
 
     # 5. VERSE PREFIX (The critical fix)
     # Broaden to catch digits followed by: letters, quotes, or parentheses.
@@ -150,7 +165,7 @@ def get_sorted_words(page, layout):
 
     # Regex to split text ending in punctuation from an immediate verse number
     # Handles: "ground—7then", "Bethuel.”23(Bethuel", "field.32The"
-    split_pattern = re.compile(r'^(.*?[\u2014\-\.!?"\u201d\u2019\)])\s*(\d{1,3})([\(A-Z].*)$')
+    split_pattern = re.compile(r'^(.*?[\u2014\-\.!?"\u201d\u2019\)])\s*(\d{1,3})([\(A-Za-z\u201c\u2018"].*)$')
 
     for w in raw:
         m = split_pattern.match(w["text"])
@@ -224,8 +239,8 @@ def clean_verse_text(text):
     # Standard normalization
     text = text.replace("\u00a0", " ")
     text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
-    # Fix Drop Cap spacing (e.g., "I n" -> "In")
-    text = re.sub(r"^([A-Z])\s+([a-z])", r"\1\2", text)
+    # Fix Drop Cap spacing (e.g., "T he" -> "The") but not standalone words (I, A, O)
+    text = re.sub(r"^([B-HJ-NP-Z])\s+([a-z])", r"\1\2", text)
     # Join hyphenated line breaks
     text = re.sub(r"(\w)-\s+(\w)", r"\1\2", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -248,146 +263,192 @@ def parse_bible_pdf(pdf_path, current_book, verbose=False):
          parser (avoiding false-positive regex joins like "I will" -> "Iwill").
     """
     pdf = pdfplumber.open(pdf_path)
-    layout = detect_layout(pdf)
+    try:
+        layout = detect_layout(pdf)
 
-    verses = []
-    current_chapter = 0
-    expected_chapter = 1
-    current_verse = 0
-    text_buf = []
-
-    def flush():
-        nonlocal text_buf
-        if current_book and current_chapter > 0 and current_verse > 0 and text_buf:
-            raw = " ".join(text_buf)
-            cleaned = clean_verse_text(raw)
-            if cleaned:
-                verses.append(Verse(current_book, current_chapter,
-                                    current_verse, cleaned))
+        verses = []
+        current_chapter = 0
+        expected_chapter = 1
+        current_verse = 0
         text_buf = []
 
-    total = len(pdf.pages)
+        def flush():
+            nonlocal text_buf
+            if current_book and current_chapter > 0 and current_verse > 0 and text_buf:
+                raw = " ".join(text_buf)
+                cleaned = clean_verse_text(raw)
+                if cleaned:
+                    verses.append(Verse(current_book, current_chapter,
+                                        current_verse, cleaned))
+            text_buf = []
 
-    for page_idx in range(total):
-        page = pdf.pages[page_idx]
+        total = len(pdf.pages)
 
-        if verbose and page_idx % 100 == 0:
-            print(f"  Page {page_idx + 1}/{total}...", file=sys.stderr)
+        for page_idx in range(total):
+            page = pdf.pages[page_idx]
 
-        # Book title page?
-        title = detect_book_title(page)
-        if title:
-            flush()
-            current_book = title
-            current_chapter = 0
-            expected_chapter = 1
-            current_verse = 0
-            if verbose:
-                print(f"  Book: {title}", file=sys.stderr)
-            continue
+            if verbose and page_idx % 100 == 0:
+                print(f"  Page {page_idx + 1}/{total}...", file=sys.stderr)
 
-        words = get_sorted_words(page, layout)
-        if not words:
-            continue
-
-        i = 0
-        while i < len(words):
-            tag, raw_text = classify_word(words[i], layout, expected_chapter)
-
-            if tag == "SKIP":
-                i += 1
+            # Skip title pages (first page or pages with very little text)
+            title = detect_book_title(page)
+            if title:
+                if verbose:
+                    print(f"  Title page: {title}", file=sys.stderr)
                 continue
 
-            # -- CHAPTER marker --
-            if tag == "CHAPTER":
-                # Look back: if the previous word was a drop cap that we
-                # already appended to text_buf, pull it out so we can
-                # re-attach it to the new chapter's verse 1.
-                drop_cap = ""
-                if i > 0:
-                    prev = words[i - 1]
-                    prev_size = round(prev["bottom"] - prev["top"], 1)
-                    if (prev_size > SIZE_DROP_CAP
-                            and len(prev["text"]) == 1
-                            and prev["text"].isalpha()):
-                        drop_cap = prev["text"]
-                        if text_buf and text_buf[-1] == prev["text"]:
-                            text_buf.pop()
+            words = get_sorted_words(page, layout)
+            if not words:
+                continue
 
-                flush()
-                current_chapter = int(raw_text)
-                expected_chapter = current_chapter + 1
-                current_verse = 1
-                text_buf = []
+            i = 0
+            while i < len(words):
+                tag, raw_text = classify_word(
+                    words[i], layout, expected_chapter, current_book)
 
-                # Merge drop cap with the next word (the continuation fragment).
-                # E.g. drop_cap="I" + next word "n" -> "In"
-                #      drop_cap="T" + next word "his" -> "This"
-                #      drop_cap="N" + next word "ow" -> "Now"
-                if drop_cap:
+                if tag == "SKIP":
+                    i += 1
+                    continue
+
+                # -- PSALM header: "PSALM" followed by a number --
+                if tag == "PSALM_HEADER":
+                    # Look ahead for the psalm/chapter number
+                    if i + 1 < len(words):
+                        nxt = words[i + 1]
+                        nxt_text = nxt["text"]
+                        if re.match(r"^\d{1,3}$", nxt_text):
+                            flush()
+                            current_chapter = int(nxt_text)
+                            expected_chapter = current_chapter + 1
+                            current_verse = 0  # wait for verse superscript
+                            text_buf = []
+                            if verbose and current_chapter % 10 == 1:
+                                print(f"  Psalm {current_chapter}",
+                                      file=sys.stderr)
+                            i += 2
+                            continue
+                    i += 1
+                    continue
+
+                # -- Auto-set chapter 1 for single-chapter books --
+                if (current_chapter == 0
+                        and tag in ("VERSE", "VERSE_PREFIX", "TEXT",
+                                    "DROP_CAP")
+                        and BOOK_CHAPTERS.get(current_book, 0) == 1):
+                    current_chapter = 1
+                    expected_chapter = 2
+
+                # -- Auto-set verse 1 when chapter exists but no verse yet --
+                # Only for body-text-sized content (skip psalm superscriptions
+                # which are ~10.6pt, below SIZE_BODY_TEXT)
+                if (current_chapter > 0 and current_verse == 0
+                        and tag in ("TEXT", "DROP_CAP")):
+                    word_size = round(words[i]["bottom"] - words[i]["top"], 1)
+                    if word_size >= SIZE_BODY_TEXT or tag == "DROP_CAP":
+                        current_verse = 1
+                    else:
+                        # Skip sub-body-text content (e.g. psalm superscriptions)
+                        i += 1
+                        continue
+
+                # -- CHAPTER marker --
+                if tag == "CHAPTER":
+                    # Look back: if the previous word was a drop cap that we
+                    # already appended to text_buf, pull it out so we can
+                    # re-attach it to the new chapter's verse 1.
+                    drop_cap = ""
+                    if i > 0:
+                        prev = words[i - 1]
+                        prev_size = round(prev["bottom"] - prev["top"], 1)
+                        if (prev_size > SIZE_DROP_CAP
+                                and len(prev["text"]) == 1
+                                and prev["text"].isalpha()):
+                            drop_cap = prev["text"]
+                            if text_buf and text_buf[-1] == prev["text"]:
+                                text_buf.pop()
+    
+                    flush()
+                    current_chapter = int(raw_text)
+                    expected_chapter = current_chapter + 1
+                    current_verse = 1
+                    text_buf = []
+    
+                    # Merge drop cap with the next word (the continuation fragment).
+                    # E.g. drop_cap="I" + next word "n" -> "In"
+                    #      drop_cap="T" + next word "his" -> "This"
+                    #      drop_cap="N" + next word "ow" -> "Now"
+                    if drop_cap:
+                        if i + 1 < len(words):
+                            nxt_tag, nxt_text = classify_word(
+                                words[i + 1], layout, expected_chapter,
+                                current_book)
+                            if (nxt_tag == "TEXT"
+                                    and nxt_text
+                                    and nxt_text[0].islower()):
+                                sep = " " if drop_cap in STANDALONE_LETTERS else ""
+                                text_buf.append(drop_cap + sep + nxt_text)
+                                i += 2  # skip chapter marker + fragment
+                                continue
+                        # Fallback: add drop cap as standalone word
+                        text_buf.append(drop_cap)
+
+                    i += 1
+                    continue
+
+                # -- DROP_CAP without preceding chapter marker --
+                if tag == "DROP_CAP":
+                    letter = raw_text
                     if i + 1 < len(words):
                         nxt_tag, nxt_text = classify_word(
-                            words[i + 1], layout, expected_chapter)
+                            words[i + 1], layout, expected_chapter,
+                            current_book)
                         if (nxt_tag == "TEXT"
                                 and nxt_text
                                 and nxt_text[0].islower()):
-                            text_buf.append(drop_cap + nxt_text)
-                            i += 2  # skip chapter marker + fragment
+                            sep = " " if letter in STANDALONE_LETTERS else ""
+                            text_buf.append(letter + sep + nxt_text)
+                            i += 2
                             continue
-                    # Fallback: add drop cap as standalone word
-                    text_buf.append(drop_cap)
-
-                i += 1
-                continue
-
-            # -- DROP_CAP without preceding chapter marker --
-            if tag == "DROP_CAP":
-                letter = raw_text
-                if i + 1 < len(words):
-                    nxt_tag, nxt_text = classify_word(
-                        words[i + 1], layout, expected_chapter)
-                    if (nxt_tag == "TEXT"
-                            and nxt_text
-                            and nxt_text[0].islower()):
-                        text_buf.append(letter + nxt_text)
-                        i += 2
-                        continue
-                text_buf.append(letter)
-                i += 1
-                continue
-
-            # -- Superscript VERSE number --
-            if tag == "VERSE":
-                flush()
-                current_verse = int(raw_text)
-                text_buf = []
-                i += 1
-                continue
-
-            # -- VERSE_PREFIX: digits fused with text, e.g. "25And" --
-            if tag == "VERSE_PREFIX":
-                m = re.match(r"^(\d{1,3})(.*)", raw_text)
-                if m:
-                    flush()
-                    current_verse = int(m.group(1))
+                    text_buf.append(letter)
+                    i += 1
+                    continue
+    
+                # -- Superscript VERSE number --
+                if tag == "VERSE":
+                    new_v = int(raw_text)
+                    # Skip redundant verse 1 if already at verse 1 with no text
+                    if not (new_v == current_verse and not text_buf):
+                        flush()
+                    current_verse = new_v
                     text_buf = []
-                    remainder = m.group(2)
-                    if remainder:
-                        text_buf.append(remainder)
+                    i += 1
+                    continue
+    
+                # -- VERSE_PREFIX: digits fused with text, e.g. "25And" --
+                if tag == "VERSE_PREFIX":
+                    m = re.match(r"^(\d{1,3})(.*)", raw_text)
+                    if m:
+                        flush()
+                        current_verse = int(m.group(1))
+                        text_buf = []
+                        remainder = m.group(2)
+                        if remainder:
+                            text_buf.append(remainder)
+                    i += 1
+                    continue
+    
+                # -- Regular TEXT --
+                if tag == "TEXT":
+                    text_buf.append(raw_text)
+                    i += 1
+                    continue
+    
                 i += 1
-                continue
-
-            # -- Regular TEXT --
-            if tag == "TEXT":
-                text_buf.append(raw_text)
-                i += 1
-                continue
-
-            i += 1
-
-    flush()
-    pdf.close()
-    return verses
+    
+        flush()
+        return verses
+    finally:
+        pdf.close()
 
 
 # --- Validation -------------------------------------------------------------
@@ -453,13 +514,13 @@ def write_json(verses, path):
 # --- CLI --------------------------------------------------------------------
 
 def main():
-    # Update this path to your file
-    output_path = "output.csv"
+    output_path = Path(__file__).resolve().parent.parent / "data" / "bible.csv"
+    esv_dir = Path(__file__).resolve().parent.parent / "data" / "esv"
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["book", "chapter", "verse", "text"])
 
-        for pdf_path in sorted(Path("/home/raymark/witb/esv/").rglob("*.pdf")):
+        for pdf_path in sorted(esv_dir.rglob("*.pdf")):
             print(f"Parsing: {pdf_path.stem.split('.')[-1]}", file=sys.stderr)
             verses = parse_bible_pdf(pdf_path, pdf_path.stem.split('.')[-1], verbose=True)
 
