@@ -121,8 +121,8 @@ def classify_word(w, layout, expected_chapter, current_book=None):
     if size > SIZE_DROP_CAP and len(text) == 1:
         return ("DROP_CAP", text)
 
-    # 3. Superscript verse numbers
-    if size < SIZE_SUPERSCRIPT and re.match(r"^\d{1,3}$", text):
+    # 3. Superscript verse numbers (must be at least ~3pt to filter artifacts)
+    if 3.0 <= size < SIZE_SUPERSCRIPT and re.match(r"^\d{1,3}$", text):
         return ("VERSE", text)
 
     # 4. Chapter markers — require position near a column's left edge
@@ -150,6 +150,20 @@ def classify_word(w, layout, expected_chapter, current_book=None):
         if 1 <= vn <= 176:
             return ("VERSE_PREFIX", text)
 
+    # 5b. Verse number fused with a comma-separated number (e.g. "3372,000")
+    # Try 1-digit, 2-digit, 3-digit prefixes and pick the valid verse number
+    if size >= SIZE_BODY_TEXT and re.match(r"^\d{2,}", text) and "," in text:
+        for ndigits in range(1, 4):
+            if ndigits >= len(text):
+                break
+            prefix = text[:ndigits]
+            rest = text[ndigits:]
+            if re.match(r"^\d+,\d+", rest):
+                vn = int(prefix)
+                if 1 <= vn <= 176:
+                    return ("VERSE_PREFIX", text)
+                    break
+
     return ("TEXT", text)
 
 
@@ -165,7 +179,7 @@ def get_sorted_words(page, layout):
 
     # Regex to split text ending in punctuation from an immediate verse number
     # Handles: "ground—7then", "Bethuel.”23(Bethuel", "field.32The"
-    split_pattern = re.compile(r'^(.*?[\u2014\-\.!?"\u201d\u2019\)])\s*(\d{1,3})([\(A-Za-z\u201c\u2018"].*)$')
+    split_pattern = re.compile(r'^(.*?[\u2014\-\.!?"\u201d\u2019\)])\s*(\d{1,3})([\(A-Za-z\u201c\u2018"].*)?$')
 
     for w in raw:
         m = split_pattern.match(w["text"])
@@ -175,10 +189,16 @@ def get_sorted_words(page, layout):
             w1["text"] = m.group(1).strip()
             expanded.append(w1)
             
-            # Part 2: Start of the new verse
+            # Part 2: Start of the new verse (group 3 may be None if
+            # verse number is at end of word, e.g. "Leah—32")
+            continuation = m.group(3) or ""
             w2 = w.copy()
-            w2["text"] = m.group(2) + m.group(3)
+            w2["text"] = m.group(2) + continuation
             w2["x0"] = w["x0"] + (len(m.group(1)) * 3) # Offset x for logic
+            if not continuation:
+                # Bare verse number — force superscript size so classify_word
+                # picks it up as VERSE
+                w2["bottom"] = w2["top"] + 5.5
             expanded.append(w2)
         else:
             expanded.append(w)
@@ -416,24 +436,42 @@ def parse_bible_pdf(pdf_path, current_book, verbose=False):
                 # -- Superscript VERSE number --
                 if tag == "VERSE":
                     new_v = int(raw_text)
-                    # Skip redundant verse 1 if already at verse 1 with no text
-                    if not (new_v == current_verse and not text_buf):
+                    # If same verse number, don't flush — continue accumulating
+                    # (handles psalm superscription text before verse 1 marker)
+                    if new_v != current_verse:
                         flush()
-                    current_verse = new_v
-                    text_buf = []
+                        current_verse = new_v
+                        text_buf = []
                     i += 1
                     continue
     
                 # -- VERSE_PREFIX: digits fused with text, e.g. "25And" --
                 if tag == "VERSE_PREFIX":
-                    m = re.match(r"^(\d{1,3})(.*)", raw_text)
-                    if m:
+                    # Try to extract verse number. Prefer split where
+                    # remainder starts with a letter (clean break).
+                    # Fall back to longest valid prefix.
+                    best_vn = None
+                    best_rem = ""
+                    for ndigits in range(1, 4):
+                        if ndigits >= len(raw_text):
+                            break
+                        prefix = raw_text[:ndigits]
+                        rest = raw_text[ndigits:]
+                        if prefix.isdigit() and 1 <= int(prefix) <= 176:
+                            if rest and rest[0].isalpha():
+                                # Clean break — use this immediately
+                                best_vn = int(prefix)
+                                best_rem = rest
+                                break
+                            elif best_vn is None:
+                                best_vn = int(prefix)
+                                best_rem = rest
+                    if best_vn is not None:
                         flush()
-                        current_verse = int(m.group(1))
+                        current_verse = best_vn
                         text_buf = []
-                        remainder = m.group(2)
-                        if remainder:
-                            text_buf.append(remainder)
+                        if best_rem:
+                            text_buf.append(best_rem)
                     i += 1
                     continue
     
