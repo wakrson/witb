@@ -1,4 +1,18 @@
+# Python
 *.venv
 *.egg-info
-witb/__pycache__
+*.ctl
+*.index
+data/
+backend/__pycache__
+data/bible.index
 
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/node_modules/
+frontend/.env*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
