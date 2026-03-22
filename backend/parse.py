@@ -143,26 +143,13 @@ def classify_word(w, layout, expected_chapter, current_book=None):
     # 5. VERSE PREFIX (The critical fix)
     # Broaden to catch digits followed by: letters, quotes, or parentheses.
     # Pattern: Digit(s) + (Anything that isn't just a digit)
-    m = re.match(r"^(\d{1,3})([A-Za-z\(\"\u2018\u201c\u2019\u201d].*)", text)
+    m = re.match(r"^(\d{1,3})([A-Za-z\(\[\"\u2018\u201c\u2019\u201d].*)", text)
     if m and size >= SIZE_BODY_TEXT:
         vn = int(m.group(1))
         # Logic guard: prevents catching years like "110 years" in genealogies
         if 1 <= vn <= 176:
             return ("VERSE_PREFIX", text)
 
-    # 5b. Verse number fused with a comma-separated number (e.g. "3372,000")
-    # Try 1-digit, 2-digit, 3-digit prefixes and pick the valid verse number
-    if size >= SIZE_BODY_TEXT and re.match(r"^\d{2,}", text) and "," in text:
-        for ndigits in range(1, 4):
-            if ndigits >= len(text):
-                break
-            prefix = text[:ndigits]
-            rest = text[ndigits:]
-            if re.match(r"^\d+,\d+", rest):
-                vn = int(prefix)
-                if 1 <= vn <= 176:
-                    return ("VERSE_PREFIX", text)
-                    break
 
     return ("TEXT", text)
 
@@ -174,14 +161,60 @@ def get_sorted_words(page, layout):
     raw = page.extract_words()
     if not raw: return []
 
+    # Pre-pass: split words where superscript verse digits are fused with
+    # body-text digits (e.g. "3372,000" = superscript "33" + body "72,000").
+    # Use character-level analysis to detect mixed-size digit sequences.
+    chars = page.chars
+    char_idx = {}
+    for c in chars:
+        key = (round(c["x0"], 0), round(c["top"], 0))
+        char_idx.setdefault(key, []).append(c)
+
+    presplit = []
+    for w in raw:
+        text = w["text"]
+        # Check digit-heavy words that might contain fused superscript verse numbers
+        if re.match(r"^\d[\d,]+$", text) and len(text) >= 3:
+            # Get characters overlapping this word's bbox
+            word_chars = [c for c in chars
+                          if c["x0"] >= w["x0"] - 1 and c["x0"] <= w["x1"] + 1
+                          and c["top"] >= w["top"] - 2 and c["top"] <= w["bottom"] + 2
+                          and c["text"].strip()]
+            word_chars.sort(key=lambda c: c["x0"])
+
+            # Check if leading chars are superscript (small) followed by body-text (large)
+            sup_text = ""
+            body_start = 0
+            for ci, c in enumerate(word_chars):
+                csize = c["bottom"] - c["top"]
+                if csize < SIZE_SUPERSCRIPT and c["text"].isdigit():
+                    sup_text += c["text"]
+                    body_start = ci + 1
+                else:
+                    break
+
+            if sup_text and body_start < len(word_chars):
+                body_text = "".join(c["text"] for c in word_chars[body_start:])
+                # Create two words: superscript verse number and body text
+                w1 = w.copy()
+                w1["text"] = sup_text
+                w1["bottom"] = w1["top"] + 5.5  # superscript size
+                presplit.append(w1)
+                w2 = w.copy()
+                w2["text"] = body_text
+                w2["x0"] = word_chars[body_start]["x0"]
+                presplit.append(w2)
+                continue
+        presplit.append(w)
+
     mid = layout["col_midpoint"]
     expanded = []
 
     # Regex to split text ending in punctuation from an immediate verse number
-    # Handles: "ground—7then", "Bethuel.”23(Bethuel", "field.32The"
+    # Handles: "ground—7then", "Bethuel."23(Bethuel", "field.32The"
     split_pattern = re.compile(r'^(.*?[\u2014\-\.!?"\u201d\u2019\)])\s*(\d{1,3})([\(A-Za-z\u201c\u2018"].*)?$')
 
-    for w in raw:
+    for w in presplit:
         m = split_pattern.match(w["text"])
         if m:
             # Part 1: Tail end of the previous verse
@@ -258,7 +291,7 @@ def clean_verse_text(text):
     if not text: return ""
     # Standard normalization
     text = text.replace("\u00a0", " ")
-    text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    text = text.replace(""", '"').replace(""", '"').replace("‘", "'").replace("’", "'")
     # Fix Drop Cap spacing (e.g., "T he" -> "The") but not standalone words (I, A, O)
     text = re.sub(r"^([B-HJ-NP-Z])\s+([a-z])", r"\1\2", text)
     # Join hyphenated line breaks
@@ -405,7 +438,8 @@ def parse_bible_pdf(pdf_path, current_book, verbose=False):
                             if (nxt_tag == "TEXT"
                                     and nxt_text
                                     and nxt_text[0].islower()):
-                                sep = " " if drop_cap in STANDALONE_LETTERS else ""
+                                sep = (" " if drop_cap in STANDALONE_LETTERS
+                                       and len(nxt_text) > 2 else "")
                                 text_buf.append(drop_cap + sep + nxt_text)
                                 i += 2  # skip chapter marker + fragment
                                 continue
@@ -425,7 +459,8 @@ def parse_bible_pdf(pdf_path, current_book, verbose=False):
                         if (nxt_tag == "TEXT"
                                 and nxt_text
                                 and nxt_text[0].islower()):
-                            sep = " " if letter in STANDALONE_LETTERS else ""
+                            sep = (" " if letter in STANDALONE_LETTERS
+                                   and len(nxt_text) > 2 else "")
                             text_buf.append(letter + sep + nxt_text)
                             i += 2
                             continue
@@ -447,31 +482,14 @@ def parse_bible_pdf(pdf_path, current_book, verbose=False):
     
                 # -- VERSE_PREFIX: digits fused with text, e.g. "25And" --
                 if tag == "VERSE_PREFIX":
-                    # Try to extract verse number. Prefer split where
-                    # remainder starts with a letter (clean break).
-                    # Fall back to longest valid prefix.
-                    best_vn = None
-                    best_rem = ""
-                    for ndigits in range(1, 4):
-                        if ndigits >= len(raw_text):
-                            break
-                        prefix = raw_text[:ndigits]
-                        rest = raw_text[ndigits:]
-                        if prefix.isdigit() and 1 <= int(prefix) <= 176:
-                            if rest and rest[0].isalpha():
-                                # Clean break — use this immediately
-                                best_vn = int(prefix)
-                                best_rem = rest
-                                break
-                            elif best_vn is None:
-                                best_vn = int(prefix)
-                                best_rem = rest
-                    if best_vn is not None:
+                    m = re.match(r"^(\d{1,3})(.*)", raw_text)
+                    if m:
                         flush()
-                        current_verse = best_vn
+                        current_verse = int(m.group(1))
                         text_buf = []
-                        if best_rem:
-                            text_buf.append(best_rem)
+                        remainder = m.group(2)
+                        if remainder:
+                            text_buf.append(remainder)
                     i += 1
                     continue
     

@@ -4,9 +4,11 @@ import json
 import faiss
 import torch
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 from sentence_transformers import SentenceTransformer
 
 app = Flask(__name__)
+CORS(app)
 
 model = None
 index = None
@@ -47,17 +49,28 @@ def search():
     if not query:
         return jsonify({"error": "query is required"}), 400
 
+    # fetch extra candidates so we can filter overlaps and still return top_k
+    fetch_k = top_k * 20
     embedding = model.encode(query, convert_to_numpy=True).astype("float32").reshape(1, -1)
-    distances, indices = index.search(embedding, top_k)
+    distances, indices = index.search(embedding, min(fetch_k, index.ntotal))
 
-    results = [
-        {
-            "ref": metadata[i]["ref"],
-            "text": metadata[i]["text"],
+    results = []
+    claimed = set()  # set of row indices already covered
+    for rank, idx in enumerate(indices[0]):
+        if idx == -1:
+            continue
+        entry = metadata[idx]
+        entry_rows = set(range(entry["start_row"], entry["end_row"] + 1))
+        if entry_rows & claimed:
+            continue
+        claimed |= entry_rows
+        results.append({
+            "ref": entry["ref"],
+            "text": entry["text"],
             "score": float(distances[0][rank]),
-        }
-        for rank, i in enumerate(indices[0])
-    ]
+        })
+        if len(results) >= top_k:
+            break
 
     return jsonify({"query": query, "results": results})
 
