@@ -49,7 +49,9 @@ export default function Home() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-black">
       <main className="flex flex-col items-center gap-6 w-full max-w-2xl px-8">
-        <h1 className="text-white text-4xl font-bold">witb</h1>
+        <div className="text-center">
+          <h1 className="text-white text-4xl font-bold">where in the bible <span className="text-zinc-500">(witb)</span></h1>
+        </div>
         <form onSubmit={handleSearch} className="w-full">
           <div className="flex w-full items-center rounded-2xl border border-zinc-700 bg-zinc-900 px-6 py-4 shadow-lg focus-within:border-zinc-400 transition-colors">
             <span className="whitespace-nowrap text-zinc-400 text-lg mr-2">
@@ -65,6 +67,13 @@ export default function Home() {
             />
           </div>
         </form>
+        {results.length === 0 && !loading && !error && (
+          <div className="flex flex-col items-center gap-1 text-zinc-600 text-sm">
+            <p>try: "does it talk about forgiveness"</p>
+            <p>try: "is there anything about dealing with anxiety"</p>
+            <p>try: "are husbands and wives discussed"</p>
+          </div>
+        )}
 
         {loading && (
           <p className="text-zinc-500 text-sm">Searching...</p>
