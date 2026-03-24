@@ -26,7 +26,7 @@ export default function Home() {
     setResults([]);
 
     try {
-      const res = await fetch(`${API_URL}/search`, {
+      const res = await fetch(`/api/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: trimmed, top_k: 5 }),
