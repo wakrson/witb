@@ -52,7 +52,7 @@ def search():
 
     # fetch extra candidates so we can filter overlaps and still return top_k
     fetch_k = top_k * 20
-    embedding = model.encode(query, convert_to_numpy=True, normalize_embeddings=True).astype("float32").reshape(1, -1)
+    embedding = model.encode(query, prompt_name="query", convert_to_numpy=True, normalize_embeddings=True).astype("float32").reshape(1, -1)
     distances, indices = index.search(embedding, min(fetch_k, index.ntotal))
 
     results = []
