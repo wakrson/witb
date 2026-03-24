@@ -23,7 +23,7 @@ def load(model_name: str, index_path: str, metadata_path: str):
         model_name,
         device="cuda",
         model_kwargs={
-            "attn_implementation": "eager",
+            "attn_implementation": "sdpa",
             "device_map": None,
             "dtype": torch.float16,
         },
@@ -45,13 +45,14 @@ def search():
     body = request.get_json(force=True)
     query = body.get("query", "").strip()
     top_k = int(body.get("top_k", 5))
+    min_window = int(body.get("min_window", 3))
 
     if not query:
         return jsonify({"error": "query is required"}), 400
 
     # fetch extra candidates so we can filter overlaps and still return top_k
     fetch_k = top_k * 20
-    embedding = model.encode(query, convert_to_numpy=True).astype("float32").reshape(1, -1)
+    embedding = model.encode(query, convert_to_numpy=True, normalize_embeddings=True).astype("float32").reshape(1, -1)
     distances, indices = index.search(embedding, min(fetch_k, index.ntotal))
 
     results = []
@@ -60,6 +61,9 @@ def search():
         if idx == -1:
             continue
         entry = metadata[idx]
+        window_size = entry["end_row"] - entry["start_row"] + 1
+        if window_size < min_window:
+            continue
         entry_rows = set(range(entry["start_row"], entry["end_row"] + 1))
         if entry_rows & claimed:
             continue

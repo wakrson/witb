@@ -4,6 +4,7 @@
 *.ctl
 *.index
 data/
+*.log
 backend/__pycache__
 data/bible.index
 
