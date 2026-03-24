@@ -48,13 +48,11 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-black">
-      <main className="flex flex-col items-center gap-6 w-full max-w-2xl px-8">
-        <div className="text-center">
-          <h1 className="text-white text-4xl font-bold">where in the bible <span className="text-zinc-500">(witb)</span></h1>
-        </div>
+      <main className="flex flex-col items-center gap-6 w-full max-w-2xl px-4 sm:px-8">
+        <p className="text-zinc-500 text-sm tracking-widest">witb</p>
         <form onSubmit={handleSearch} className="w-full">
-          <div className="flex w-full items-center rounded-2xl border border-zinc-700 bg-zinc-900 px-6 py-4 shadow-lg focus-within:border-zinc-400 transition-colors">
-            <span className="whitespace-nowrap text-zinc-400 text-lg mr-2">
+          <div className="flex w-full items-center rounded-2xl border border-zinc-700 bg-zinc-900 px-4 py-3 sm:px-6 sm:py-4 shadow-lg focus-within:border-zinc-400 transition-colors">
+            <span className="whitespace-nowrap text-zinc-400 text-base sm:text-lg mr-2">
               where in the bible...
             </span>
             <input
@@ -62,7 +60,7 @@ export default function Home() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder=""
-              className="flex-1 bg-transparent text-white text-lg outline-none placeholder-zinc-600"
+              className="flex-1 bg-transparent text-white text-base sm:text-lg outline-none placeholder-zinc-600"
               disabled={loading}
             />
           </div>
@@ -88,16 +86,11 @@ export default function Home() {
             {results.map((r, i) => (
               <div
                 key={i}
-                className="rounded-xl border border-zinc-800 bg-zinc-900 px-6 py-4"
+                className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 sm:px-6 sm:py-4 hover:border-zinc-600 transition-colors cursor-default"
               >
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-zinc-400 text-sm font-medium">
-                    {r.ref}
-                  </p>
-                  <p className="text-zinc-500 text-xs">
-                    {r.score.toFixed(2)}
-                  </p>
-                </div>
+                <p className="text-zinc-400 text-sm font-medium mb-1">
+                  {r.ref}
+                </p>
                 <p className="text-white text-base leading-relaxed">
                   {r.text}
                 </p>
