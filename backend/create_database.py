@@ -7,27 +7,25 @@ from sentence_transformers import SentenceTransformer
 import csv
 import faiss
 import numpy as np
-import tqdm
 import json
+import torch
+import tqdm
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8
+WINDOW_SIZES = [1, 3, 5, 10]
 
-
-def make_ref(chunk: list[dict]) -> str:
-    start_book, start_ch, start_vs = chunk[0]['book'], chunk[0]['chapter'], chunk[0]['verse']
-    end_ch, end_vs = chunk[-1]['chapter'], chunk[-1]['verse']
+def make_ref(book: str, start_ch: str, start_vs: str, end_ch: str, end_vs: str) -> str:
     if start_ch == end_ch and start_vs == end_vs:
-        return f"{start_book} {start_ch}:{start_vs}"
+        return f"{book} {start_ch}:{start_vs}"
     elif start_ch == end_ch:
-        return f"{start_book} {start_ch}:{start_vs}-{end_vs}"
+        return f"{book} {start_ch}:{start_vs}-{end_vs}"
     else:
-        return f"{start_book} {start_ch}:{start_vs}-{end_ch}:{end_vs}"
+        return f"{book} {start_ch}:{start_vs}-{end_ch}:{end_vs}"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser("")
-    parser.add_argument("--min-window", type=int, default=1)
-    parser.add_argument("--max-window", type=int, default=10)
+    parser.add_argument("--window-sizes", type=int, nargs="+", default=WINDOW_SIZES)
     parser.add_argument("--input", default=f"{Path(__file__).parent.parent / 'data' / 'bible.csv'}")
     parser.add_argument("--output", default=f"{Path(__file__).parent.parent / 'data' / 'bible.index'}")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -37,8 +35,9 @@ def main() -> None:
         "Qwen/Qwen3-Embedding-4B",
         device="cuda",
         model_kwargs={
-            "attn_implementation": "eager",
+            "attn_implementation": "sdpa",
             "device_map": None,
+            "dtype": torch.float16,
         },
         tokenizer_kwargs={"padding_side": "left"},
     )
@@ -50,34 +49,70 @@ def main() -> None:
         print("No rows found in input CSV.")
         return
 
+    # Precompute per-verse text and book for fast lookups
+    verse_texts = [r["text"] for r in rows]
+    verse_books = [r["book"] for r in rows]
+
+    # Build prefix sums so any window's text is a single slice + join
+    # For window=1 we already have verse_texts; for larger windows we
+    # incrementally build text by appending one verse to the previous window.
     texts = []
     metadata = []
-    for window in range(args.min_window, args.max_window + 1):
-        for i in range(0, len(rows) - window + 1):
-            chunk = rows[i : i + window]
-            # skip chunks that cross book boundaries
-            if chunk[0]['book'] != chunk[-1]['book']:
-                continue
-            text = " ".join(r["text"] for r in chunk)
-            ref = make_ref(chunk)
-            texts.append(text)
-            metadata.append({
-                "ref": ref,
-                "text": text,
-                "start_row": i,
-                "end_row": i + window - 1,
-            })
 
-    print(f"Encoding {len(texts)} entries (windows {args.min_window}-{args.max_window})...")
+    for window in sorted(args.window_sizes):
+        if window == 1:
+            prev_texts = {}
+            for i in range(len(rows)):
+                t = verse_texts[i]
+                prev_texts[i] = t
+                ref = make_ref(verse_books[i], rows[i]['chapter'], rows[i]['verse'],
+                               rows[i]['chapter'], rows[i]['verse'])
+                texts.append(t)
+                metadata.append({
+                    "ref": ref,
+                    "text": t,
+                    "start_row": i,
+                    "end_row": i,
+                })
+        else:
+            new_prev = {}
+            for i in range(0, len(rows) - window + 1):
+                if verse_books[i] != verse_books[i + window - 1]:
+                    continue
+                # Try to build from cached (window-1) text
+                prev = prev_texts.get(i)
+                if prev is not None and verse_books[i] == verse_books[i + window - 2]:
+                    t = prev + " " + verse_texts[i + window - 1]
+                else:
+                    t = " ".join(verse_texts[i : i + window])
+                new_prev[i] = t
+                ref = make_ref(verse_books[i],
+                               rows[i]['chapter'], rows[i]['verse'],
+                               rows[i + window - 1]['chapter'], rows[i + window - 1]['verse'])
+                texts.append(t)
+                metadata.append({
+                    "ref": ref,
+                    "text": t,
+                    "start_row": i,
+                    "end_row": i + window - 1,
+                })
+            prev_texts = new_prev
+
+    print(f"Encoding {len(texts)} entries (windows {args.window_sizes})...")
     index = None
-    for batch_start in tqdm.tqdm(range(0, len(texts), args.batch_size)):
+    for batch_start in tqdm.tqdm(range(0, len(texts), args.batch_size), desc="Encoding"):
         batch = texts[batch_start : batch_start + args.batch_size]
-        embeddings = model.encode(batch, convert_to_numpy=True).astype("float32")
+        embeddings = model.encode(
+            batch,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).astype("float32")
         if embeddings.ndim == 1:
             embeddings = embeddings.reshape(1, -1)
 
         if index is None:
-            index = faiss.IndexFlatL2(embeddings.shape[1])
+            index = faiss.IndexFlatIP(embeddings.shape[1])
         index.add(embeddings)
 
     output_path = Path(args.output)
