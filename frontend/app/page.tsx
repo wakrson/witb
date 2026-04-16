@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 interface SearchResult {
   ref: string;
@@ -15,21 +15,32 @@ export default function Home() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [dots, setDots] = useState("");
+  const abortRef = useRef<AbortController | null>(null);
 
-  async function handleSearch(e: FormEvent) {
-    e.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) return;
+  async function runSearch(q: string) {
+    const trimmed = q.trim();
+    if (!trimmed) {
+      abortRef.current?.abort();
+      setResults([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setLoading(true);
     setError("");
-    setResults([]);
 
     try {
       const res = await fetch(`/api/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: trimmed, top_k: 5 }),
+        body: JSON.stringify({ query: trimmed, top_k: 3 }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -38,12 +49,39 @@ export default function Home() {
       }
 
       const data = await res.json();
-      setResults(data.results);
+      if (!controller.signal.aborted) {
+        setResults(data.results);
+        setLoading(false);
+      }
     } catch (err) {
+      if ((err as Error).name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
       setLoading(false);
     }
+  }
+
+  useEffect(() => {
+    const id = setTimeout(() => runSearch(query), 300);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  useEffect(() => {
+    if (!loading) {
+      setDots("");
+      return;
+    }
+    const frames = ["", ".", "..", "..."];
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % frames.length;
+      setDots(frames[i]);
+    }, 400);
+    return () => clearInterval(id);
+  }, [loading]);
+
+  function handleSearch(e: FormEvent) {
+    e.preventDefault();
+    runSearch(query);
   }
 
   return (
@@ -60,8 +98,8 @@ export default function Home() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder=""
-              className="flex-1 bg-transparent text-white text-base sm:text-lg outline-none placeholder-zinc-600"
-              disabled={loading}
+              autoFocus
+              className="flex-1 min-w-0 bg-transparent text-white text-base sm:text-lg outline-none placeholder-zinc-600"
             />
           </div>
         </form>
@@ -74,7 +112,9 @@ export default function Home() {
         )}
 
         {loading && (
-          <p className="text-zinc-500 text-sm">Searching...</p>
+          <p className="text-zinc-500 text-sm">
+            searching<span className="inline-block w-4 text-left">{dots}</span>
+          </p>
         )}
 
         {error && (

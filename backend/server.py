@@ -45,7 +45,7 @@ def search():
     body = request.get_json(force=True)
     query = body.get("query", "").strip()
     top_k = int(body.get("top_k", 5))
-    min_window = int(body.get("min_window", 3))
+    min_window = int(body.get("min_window", 1))
 
     if not query:
         return jsonify({"error": "query is required"}), 400
